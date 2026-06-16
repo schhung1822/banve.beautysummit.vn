@@ -6,6 +6,7 @@
 
 * {
   box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
 }
 
 html,
@@ -26,6 +27,15 @@ body {
 
 a {
   color: inherit;
+}
+
+a,
+button,
+[role="button"],
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
 }
 
 button,
@@ -103,6 +113,17 @@ select {
   grid-template-columns: 1fr 1fr;
   gap: 28px;
   align-items: start;
+}
+
+.upgrade-layout {
+  width: min(920px, 100%);
+  margin: 0 auto;
+  grid-template-columns: 1fr;
+  gap: 22px;
+}
+
+.upgrade-card {
+  padding: 32px;
 }
 
 .bsp-benefits {
@@ -367,10 +388,15 @@ select {
   display: flex;
   align-items: center;
   gap: 14px;
+  width: 100%;
   padding: 14px;
   border-radius: 16px;
   border: 1.5px solid var(--line);
   background: #fff;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
   transition: all 0.22s ease;
   box-shadow: 0 3px 12px rgba(65, 26, 105, 0.03);
 }
@@ -422,6 +448,122 @@ select {
   font-weight: 700;
   letter-spacing: 1.2px;
   flex-shrink: 0;
+}
+
+.upgrade-ticket-list {
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.upgrade-ticket {
+  min-height: 146px;
+  align-items: stretch;
+  justify-content: space-between;
+  padding: 18px;
+  overflow: hidden;
+}
+
+.upgrade-ticket-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  min-width: 200px;
+}
+
+.upgrade-ticket-kicker {
+  color: #7b6c9a;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+
+.upgrade-ticket-preview {
+  width: min(380px, 46%);
+  min-width: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.upgrade-ticket-image {
+  max-width: 200px;
+  height: auto;
+  display: block;
+  object-fit: contain;
+  filter: drop-shadow(0 16px 22px rgba(32, 10, 78, 0.18));
+}
+
+.upgrade-ticket-fallback {
+  position: relative;
+  aspect-ratio: 2.65 / 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 18px;
+  overflow: hidden;
+  border-radius: 18px;
+  color: #fff;
+  text-align: left;
+  box-shadow: 0 16px 34px rgba(32, 10, 78, 0.2);
+}
+
+.upgrade-ticket-fallback::before {
+  content: "";
+  position: absolute;
+  inset: -36%;
+  background:
+    radial-gradient(circle at 26% 22%, rgba(255, 255, 255, 0.42), transparent 18%),
+    radial-gradient(circle at 78% 18%, rgba(255, 255, 255, 0.24), transparent 16%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.16), transparent 46%);
+  transform: rotate(-12deg);
+}
+
+.upgrade-ticket-fallback::after {
+  content: "";
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: -24px 0 0 rgba(255, 255, 255, 0.1);
+}
+
+.upgrade-ticket-fallback span,
+.upgrade-ticket-fallback strong {
+  position: relative;
+  z-index: 1;
+}
+
+.upgrade-ticket-fallback span {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  opacity: 0.86;
+}
+
+.upgrade-ticket-fallback strong {
+  margin-top: 4px;
+  font-size: 34px;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.upgrade-ticket-gold .upgrade-ticket-fallback {
+  background: linear-gradient(135deg, #d99b23 0%, #ffe58c 48%, #93611c 100%);
+}
+
+.upgrade-ticket-ruby .upgrade-ticket-fallback {
+  background: linear-gradient(135deg, #a80d54 0%, #f43f8f 45%, #63108f 100%);
+}
+
+.upgrade-ticket-vip .upgrade-ticket-fallback {
+  background: linear-gradient(135deg, #1b174d 0%, #6831d1 48%, #ec4899 100%);
 }
 
 .bsp-tk-nm {
@@ -605,6 +747,70 @@ select {
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
+}
+
+.upgrade-total {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  margin: 18px 0 18px;
+  padding: 22px 24px;
+  overflow: hidden;
+  border-radius: 22px;
+  border: 1px solid rgba(236, 72, 153, 0.2);
+  background:
+    radial-gradient(circle at 92% 18%, rgba(236, 72, 153, 0.16), transparent 26%),
+    linear-gradient(135deg, #fff 0%, #fff7fb 45%, #f7f0ff 100%);
+  box-shadow: 0 16px 36px rgba(82, 35, 137, 0.1);
+}
+
+.upgrade-total::before {
+  content: "";
+  position: absolute;
+  top: 18px;
+  right: 22px;
+  width: 74px;
+  height: 74px;
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(236, 72, 153, 0.18), rgba(139, 92, 246, 0.16));
+  transform: rotate(12deg);
+}
+
+.upgrade-total > div {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.upgrade-total span {
+  color: #5d5078;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+
+.upgrade-total strong {
+  color: #1e2156;
+  font-size: clamp(28px, 4vw, 42px);
+  line-height: 1;
+  text-align: right;
+}
+
+.upgrade-total small {
+  position: relative;
+  z-index: 1;
+  color: #6b5d82;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.upgrade-pay {
+  min-height: 58px;
+  font-size: 15px;
 }
 
 .bsp-err {
@@ -1099,39 +1305,194 @@ select {
 
 .thanks-page {
   min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  padding: 48px 18px 56px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 22% 12%, rgba(89, 205, 232, 0.5), transparent 28%),
+    radial-gradient(circle at 76% 8%, rgba(255, 68, 213, 0.65), transparent 30%),
+    linear-gradient(135deg, #7c6dff 0%, #d738f3 42%, #f50ebd 72%, #6a2fff 100%);
 }
 
-.thanks-card {
-  width: min(680px, 100%);
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(220, 199, 241, 0.8);
-  box-shadow: 0 20px 60px rgba(71, 30, 117, 0.14);
-  border-radius: 28px;
-  padding: 36px;
+.thanks-poster {
+  position: relative;
+  width: min(660px, 100%);
+  min-height: 720px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 42px 44px 72px;
+  overflow: hidden;
+  border-radius: 44px;
   text-align: center;
+  color: #fff;
+  background:
+    radial-gradient(circle at 50% 22%, rgba(246, 44, 177, 0.28), transparent 32%),
+    radial-gradient(circle at 50% 78%, rgba(91, 45, 193, 0.38), transparent 34%),
+    linear-gradient(180deg, #2d0748 0%, #1c0537 58%, #16052d 100%);
+  border: 2px solid rgba(255, 190, 255, 0.46);
+  box-shadow:
+    0 34px 90px rgba(44, 0, 85, 0.35),
+    inset 0 0 44px rgba(255, 67, 214, 0.16);
+  animation: thanks-card-in 700ms ease-out both;
+}
+
+.thanks-poster::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.55), transparent 22%, transparent 72%, rgba(255, 46, 208, 0.38));
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  padding: 2px;
+}
+
+.thanks-stars,
+.thanks-stars::before,
+.thanks-stars::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.94) 0 1.5px, transparent 1.9px),
+    radial-gradient(circle, rgba(110, 221, 255, 0.86) 0 1.2px, transparent 1.7px);
+  background-position:
+    42px 72px,
+    112px 36px;
+  background-size:
+    132px 142px,
+    188px 176px;
+  opacity: 0.9;
+  animation: thanks-stars-drift 11s linear infinite;
+}
+
+.thanks-stars::before {
+  opacity: 0.5;
+  transform: scale(1.2);
+  animation-duration: 17s;
+}
+
+.thanks-stars::after {
+  opacity: 0.35;
+  transform: scale(0.82);
+  animation-duration: 8s;
+  animation-direction: reverse;
+}
+
+.thanks-orbit {
+  position: absolute;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 82, 224, 0.45);
+  filter: blur(0.2px);
+  box-shadow: 0 0 28px rgba(255, 35, 205, 0.32);
+}
+
+.thanks-orbit-one {
+  width: 260px;
+  height: 82px;
+  top: 132px;
+  left: 50%;
+  transform: translateX(-50%) rotate(-18deg);
+  animation: thanks-orbit-pulse 3.8s ease-in-out infinite;
+}
+
+.thanks-orbit-two {
+  width: 360px;
+  height: 122px;
+  top: 168px;
+  left: 50%;
+  transform: translateX(-50%) rotate(21deg);
+  border-color: rgba(99, 218, 255, 0.32);
+  animation: thanks-orbit-pulse 4.8s ease-in-out infinite reverse;
+}
+
+.thanks-mascot {
+  position: absolute;
+  top: 40px;
+  left: 50%;
+  z-index: 2;
+  width: min(300px, 78%);
+  height: auto;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 28px 34px rgba(255, 30, 169, 0.24));
+  animation: thanks-mascot-float 3.6s ease-in-out infinite;
 }
 
 .thanks-badge {
+  position: relative;
+  z-index: 3;
   display: inline-flex;
-  padding: 8px 14px;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 16px;
   border-radius: 999px;
-  background: #ecfdf3;
-  color: #15803d;
+  color: #256458;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.8px;
+  box-shadow: 0 0 26px rgba(73, 255, 199, 0.16);
 }
 
-.thanks-card h1 {
-  margin: 18px 0 12px;
-  font-size: 40px;
-  line-height: 1.1;
+.thanks-poster h1 {
+  position: relative;
+  z-index: 3;
+  max-width: 520px;
+  margin: 22px auto 34px;
+  font-size: 34px;
+  line-height: 1.18;
+  color: #fff;
+  text-wrap: balance;
+  text-shadow: 0 6px 26px rgba(0, 0, 0, 0.28);
+}
+
+.thanks-brand-row {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 20px;
+}
+
+.thanks-brand-row img {
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
+}
+
+.thanks-brand-row span {
+  width: 1px;
+  height: 34px;
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.thanks-card {
+  width: min(660px, 100%);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  box-shadow: 0 24px 70px rgba(49, 0, 83, 0.22);
+  border-radius: 24px;
+  padding: 32px;
+  text-align: center;
+  backdrop-filter: blur(18px);
+  animation: thanks-card-in 700ms ease-out 120ms both;
+}
+
+.thanks-card h2 {
+  margin: 0 0 14px;
+  font-size: 28px;
+  line-height: 1.2;
   color: #1e2156;
-  margin-bottom: 32px;
 }
 
 .thanks-card p {
@@ -1146,9 +1507,18 @@ select {
   margin-bottom: 20px;
   padding: 14px 18px;
   border-radius: 16px;
-  background: #faf6ff;
-  color: #3f3356;
-  border: 1px solid #eadcf7;
+  background: #f7f2ff;
+  color: #34224f;
+  border: 1px solid #ead9ff;
+  font-weight: 600;
+}
+
+.thanks-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin: 2px 0 22px;
 }
 
 .thanks-link {
@@ -1163,6 +1533,66 @@ select {
   text-decoration: none;
   font-weight: 700;
   box-shadow: 0 16px 30px rgba(139, 92, 246, 0.28);
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.thanks-link:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 36px rgba(139, 92, 246, 0.36);
+}
+
+.thanks-link-secondary {
+  background: linear-gradient(135deg, #22d3ee, #6d28d9);
+}
+
+@keyframes thanks-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes thanks-mascot-float {
+  0%,
+  100% {
+    transform: translateX(-50%) translateY(0) rotate(-1deg);
+  }
+
+  50% {
+    transform: translateX(-50%) translateY(-14px) rotate(1.5deg);
+  }
+}
+
+@keyframes thanks-stars-drift {
+  from {
+    background-position:
+      42px 72px,
+      112px 36px;
+  }
+
+  to {
+    background-position:
+      42px 214px,
+      112px 212px;
+  }
+}
+
+@keyframes thanks-orbit-pulse {
+  0%,
+  100% {
+    opacity: 0.42;
+    scale: 0.98;
+  }
+
+  50% {
+    opacity: 0.8;
+    scale: 1.04;
+  }
 }
 
 @keyframes bsp-spin {
@@ -1177,10 +1607,19 @@ select {
     grid-template-columns: 1fr;
   }
 
+  .upgrade-layout {
+    width: 100%;
+  }
+
   .bsp-tk,
   .bsp-tk-bd {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .upgrade-ticket {
+    flex-direction: row;
+    align-items: stretch;
   }
 
   .bsp-tk-img-wrap {
@@ -1195,7 +1634,7 @@ select {
     padding: 16px 12px 40px;
   }
 
-  .thanks-card h1 {
+  .thanks-card h2 {
     font-size: 28px;
   }
 
@@ -1207,6 +1646,87 @@ select {
   .cardpay,
   .thanks-card {
     padding: 20px;
+  }
+
+  .upgrade-card {
+    padding: 20px;
+  }
+
+  .upgrade-ticket {
+    flex-direction: row;
+    min-height: 0;
+  }
+
+  .upgrade-ticket-preview {
+    min-width: 0;
+    justify-content: start;
+  }
+
+  .upgrade-ticket-image {
+    max-width: 120px;
+  }
+
+  .upgrade-total {
+    padding: 20px;
+  }
+
+  .upgrade-total > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .upgrade-total strong {
+    text-align: left;
+  }
+
+  .thanks-page {
+    padding: 28px 12px 40px;
+    gap: 18px;
+  }
+
+  .thanks-poster {
+    min-height: 570px;
+    padding: 28px 22px 44px;
+    border-radius: 32px;
+  }
+
+  .thanks-mascot {
+    top: 36px;
+    width: min(260px, 86%);
+  }
+
+  .thanks-orbit-one {
+    top: 112px;
+    width: 210px;
+  }
+
+  .thanks-orbit-two {
+    top: 144px;
+    width: 280px;
+  }
+
+  .thanks-poster h1 {
+    font-size: 25px;
+    margin-bottom: 26px;
+  }
+
+  .thanks-brand-row {
+    gap: 16px;
+    font-size: 17px;
+  }
+
+  .thanks-brand-row img {
+    width: 38px;
+    height: 38px;
+  }
+
+  .thanks-actions {
+    flex-direction: column;
+  }
+
+  .thanks-link {
+    width: 100%;
   }
 
   .bsp-hero {
@@ -1236,10 +1756,26 @@ select {
     font-size: 13px;
   }
 
-  .bsp-vw,
   .btn-row {
     grid-template-columns: 1fr;
     display: grid;
+  }
+
+  .bsp-vw {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .bsp-vi {
+    min-width: 0;
+    padding: 0 16px;
+  }
+
+  .bsp-vb {
+    min-width: 104px;
+    padding: 0 14px;
   }
 
   .page-wrap {

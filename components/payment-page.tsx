@@ -84,6 +84,9 @@ export function PaymentPage({
         }
 
         setOrderDetail(payload.data);
+        if (payload.data.status === "paydone") {
+          router.push(`/trang-cam-on?orderid=${encodeURIComponent(orderId)}`);
+        }
       } catch (caughtError) {
         setError(
           caughtError instanceof Error
@@ -96,7 +99,7 @@ export function PaymentPage({
     }
 
     void loadOrderDetail();
-  }, [orderId]);
+  }, [orderId, router]);
   async function copyText(text: string) {
     try {
       await navigator.clipboard.writeText(text);

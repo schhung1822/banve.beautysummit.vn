@@ -82,3 +82,28 @@ export type OrderDetail = {
 export type PaymentStatus = {
   status: "pending" | "paydone";
 };
+
+export type TicketUpgradeTier = "GOLD" | "RUBY" | "VIP";
+
+export type TicketUpgradeOption = {
+  tier: TicketUpgradeTier;
+  amount: number;
+};
+
+export type TicketUpgradeInfo = {
+  orderCode: string;
+  orderId: string;
+  customerName: string;
+  phone: string;
+  email: string;
+  className: string;
+  currentMoney: number;
+  currentTier: TicketUpgradeTier;
+  status: string;
+  options: TicketUpgradeOption[];
+};
+
+export type CreateTicketUpgradeInput = {
+  orderCode: string;
+  targetTier: TicketUpgradeTier;
+};

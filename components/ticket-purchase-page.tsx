@@ -214,9 +214,13 @@ export function TicketPurchasePage() {
         payload.data.classy === "money"
           ? `Giảm ${formatCurrency(payload.data.money ?? 0)}`
           : `Giảm ${payload.data.rate ?? 0}%`;
+      const voucherNote =
+        payload.data.classy === "rate" && (payload.data.rate ?? 0) >= 100
+          ? " Mã voucher giảm 100% chỉ áp dụng cho 1 vé với mỗi lần mua."
+          : "";
 
       setVoucherMessage(
-        payload.data.class ? `${label} (vé ${payload.data.class})` : label
+        `${payload.data.class ? `${label} (vé ${payload.data.class})` : label}.${voucherNote}`
       );
       setVoucherMessageType("ok");
     } catch (error) {
@@ -227,6 +231,18 @@ export function TicketPurchasePage() {
       setVoucherMessageType("err");
     } finally {
       setVoucherLoading(false);
+    }
+  }
+
+  async function getPublicClientIp() {
+    try {
+      const response = await fetch("https://api.ipify.org?format=json", {
+        cache: "no-store"
+      });
+      const payload = (await response.json()) as { ip?: string };
+      return payload.ip?.trim() || "";
+    } catch {
+      return "";
     }
   }
 
@@ -249,6 +265,7 @@ export function TicketPurchasePage() {
     setSubmitLoading(true);
 
     try {
+      const clientIp = await getPublicClientIp();
       const response = await fetch("/api/orders", {
         method: "POST",
         headers: {
@@ -264,7 +281,8 @@ export function TicketPurchasePage() {
           utmMedium: url.searchParams.get("utm_medium") || "",
           utmCampaign: url.searchParams.get("utm_campaign") || "",
           fbp: getCookie("_fbp"),
-          fbc: getCookie("_fbc") || url.searchParams.get("fbclid") || ""
+          fbc: getCookie("_fbc") || url.searchParams.get("fbclid") || "",
+          clientIp
         })
       });
 
@@ -316,6 +334,17 @@ export function TicketPurchasePage() {
               )}
             >
               Link dự phòng 2
+            </a>
+          </div>
+          <div className="bsp-backup-links">
+            <a
+              className="thanks-link"
+              href={buildLinkWithCurrentQuery(
+                process.env.NEXT_PUBLIC_PRIMARY_LINK ||
+                  "/nang-hang-ve"
+              )}
+            >
+              Nâng hạng vé
             </a>
           </div>
         </header>

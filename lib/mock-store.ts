@@ -1,5 +1,5 @@
 import { mockTickets, mockVouchers } from "@/lib/constants";
-import type { OrderRecord, Ticket } from "@/lib/types";
+import type { OrderRecord, Ticket, TicketUpgradeTier } from "@/lib/types";
 
 type MutableVoucher = {
   voucher: string;
@@ -23,6 +23,20 @@ const vouchers = new Map<string, MutableVoucher>(
   ])
 );
 const orders = new Map<string, OrderRecord[]>();
+const upgradeRequests = new Map<
+  string,
+  {
+    requestId: string;
+    orderCode: string;
+    fromClass: TicketUpgradeTier;
+    toClass: TicketUpgradeTier;
+    amount: number;
+    originalMoney: number;
+    status: string;
+    createTime: string;
+    updateTime: string | null;
+  }
+>();
 
 export function getMockTickets() {
   return tickets;
@@ -59,7 +73,71 @@ export function getMockOrder(orderId: string) {
   return orders.get(orderId) ?? null;
 }
 
+export function getMockOrderByOrderCode(orderCode: string) {
+  const code = orderCode.trim();
+  for (const records of orders.values()) {
+    const record = records.find((item) => item.orderCode === code);
+    if (record) return record;
+  }
+  return null;
+}
+
+export function saveMockUpgradeRequest(request: {
+  requestId: string;
+  orderCode: string;
+  fromClass: TicketUpgradeTier;
+  toClass: TicketUpgradeTier;
+  amount: number;
+  originalMoney: number;
+  status: string;
+  createTime: string;
+  updateTime: string | null;
+}) {
+  upgradeRequests.set(request.requestId, request);
+}
+
+export function getMockUpgradeRequest(requestId: string) {
+  return upgradeRequests.get(requestId.trim()) ?? null;
+}
+
+export function completeMockUpgradeRequest(requestId: string, updateTime: string) {
+  const request = getMockUpgradeRequest(requestId);
+  if (!request) return false;
+
+  let updatedTicket = false;
+  for (const [orderId, records] of orders.entries()) {
+    const nextRecords = records.map((record) =>
+      record.orderCode === request.orderCode
+        ? {
+            ...record,
+            className: request.toClass,
+            money: request.originalMoney + request.amount,
+            status: "paydone"
+          }
+        : record
+    );
+
+    if (nextRecords.some((record) => record.orderCode === request.orderCode)) {
+      orders.set(orderId, nextRecords);
+      updatedTicket = true;
+    }
+  }
+
+  if (!updatedTicket) return false;
+
+  upgradeRequests.set(requestId, {
+    ...request,
+    status: "paydone",
+    updateTime
+  });
+  return true;
+}
+
 export function markMockOrderPaid(orderId: string) {
+  if (completeMockUpgradeRequest(orderId, new Date().toISOString())) {
+    return true;
+  }
+
   const records = orders.get(orderId);
   if (!records) return false;
   orders.set(

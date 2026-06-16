@@ -26,16 +26,26 @@ export function calculateCartSummary(
     }
 
     if (voucher.classy === "rate") {
-      if (voucher.class) {
+      const rate = voucher.rate ?? 0;
+
+      if (rate >= 100) {
+        const targetClass = upperVi(voucher.class);
+        const freeTicket = tickets.find((ticket) => {
+          if (!targetClass) return ticket.quantity > 0;
+          return ticket.quantity > 0 && upperVi(ticket.name).includes(targetClass);
+        });
+
+        if (freeTicket) {
+          discount = freeTicket.price;
+        }
+      } else if (voucher.class) {
         tickets.forEach((ticket) => {
           if (upperVi(ticket.name).includes(upperVi(voucher.class))) {
-            discount += Math.round(
-              (ticket.price * ticket.quantity * (voucher.rate ?? 0)) / 100
-            );
+            discount += Math.round((ticket.price * ticket.quantity * rate) / 100);
           }
         });
       } else {
-        discount = Math.round((subtotal * (voucher.rate ?? 0)) / 100);
+        discount = Math.round((subtotal * rate) / 100);
       }
     }
   }

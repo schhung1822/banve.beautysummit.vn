@@ -1,29 +1,38 @@
 import "server-only";
 
 import { isIP } from "node:net";
-import type { PoolConnection, RowDataPacket } from "mysql2/promise";
+import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 
 import { getDatabasePool, hasDatabaseConfig } from "@/lib/db";
 import {
+  completeMockUpgradeRequest,
   decreaseMockVoucher,
   getMockOrder,
+  getMockOrderByOrderCode,
   getMockTickets,
+  getMockUpgradeRequest,
   getMockVoucher,
   hasMockOrderCode,
   hasMockOrderId,
   markMockOrderPaid,
-  saveMockOrder
+  saveMockOrder,
+  saveMockUpgradeRequest
 } from "@/lib/mock-store";
 import type {
   CartTicketInput,
   CreateOrderInput,
+  CreateTicketUpgradeInput,
   CreatedOrder,
   OrderDetail,
   OrderRecord,
   PaymentStatus,
   Ticket,
+  TicketUpgradeInfo,
+  TicketUpgradeOption,
+  TicketUpgradeTier,
   ValidatedVoucher
 } from "@/lib/types";
+import { calculateCartSummary } from "@/lib/pricing";
 import {
   compareDbDateString,
   generateCode,
@@ -66,9 +75,31 @@ type OrderRow = RowDataPacket & {
   status: string;
 };
 
+type UpgradeRequestRow = RowDataPacket & {
+  request_id: string;
+  ordercode: string;
+  from_class: TicketUpgradeTier;
+  to_class: TicketUpgradeTier;
+  amount: number;
+  original_money: number;
+  status: string;
+  create_time: string;
+  update_time: string | null;
+};
+
 const EXTERNAL_WEBHOOK_TIMEOUT_MS = Number(
   process.env.BS_WEBHOOK_TIMEOUT_MS || 15000
 );
+const PAYMENT_UPDATE_WEBHOOK_URL =
+  "https://nextg.nextgency.vn/webhook/update-payment";
+const TICKET_UPGRADE_OPTIONS: Record<TicketUpgradeTier, TicketUpgradeOption[]> = {
+  GOLD: [
+    { tier: "RUBY", amount: 300000 },
+    { tier: "VIP", amount: 900000 }
+  ],
+  RUBY: [{ tier: "VIP", amount: 600000 }],
+  VIP: []
+};
 
 function getBaseUrl() {
   return process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
@@ -247,6 +278,88 @@ async function generateUniqueCode(
   return generateCode(prefix);
 }
 
+function buildUpgradePaymentCode(orderCode: string) {
+  return `NHVBS${orderCode.trim()}`;
+}
+
+function stripUpgradePaymentPrefix(code: string) {
+  const trimmed = code.trim();
+  if (trimmed.startsWith("NHVBS")) return trimmed.slice(3);
+  if (trimmed.startsWith("NHVBS")) return trimmed.slice(5);
+  return trimmed;
+}
+
+function getUpgradePaymentCodeCandidates(code: string) {
+  const trimmed = code.trim();
+  const orderCode = stripUpgradePaymentPrefix(trimmed);
+  return Array.from(new Set([trimmed, buildUpgradePaymentCode(orderCode)]));
+}
+
+function getTicketTier(className: string): TicketUpgradeTier | null {
+  const normalized = upperVi(className);
+  if (normalized.includes("GOLD")) return "GOLD";
+  if (normalized.includes("RUBY")) return "RUBY";
+  if (normalized.includes("VIP")) return "VIP";
+  return null;
+}
+
+function getUpgradeAmount(fromTier: TicketUpgradeTier, toTier: TicketUpgradeTier) {
+  return TICKET_UPGRADE_OPTIONS[fromTier].find((option) => option.tier === toTier)
+    ?.amount ?? null;
+}
+
+function buildUpgradeInfo(row: OrderRow): TicketUpgradeInfo {
+  const currentTier = getTicketTier(row.class);
+  if (!currentTier) {
+    throw new Error("Hang ve hien tai khong ho tro nang hang.");
+  }
+
+  return {
+    orderCode: row.ordercode,
+    orderId: row.order_id,
+    customerName: row.name,
+    phone: row.phone,
+    email: row.email,
+    className: row.class,
+    currentMoney: Number(row.money),
+    currentTier,
+    status: row.status,
+    options: TICKET_UPGRADE_OPTIONS[currentTier]
+  };
+}
+
+async function ensureTicketUpgradeTable(connection: PoolConnection) {
+  await connection.query(`
+    CREATE TABLE IF NOT EXISTS ticket_upgrade_requests (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      request_id VARCHAR(80) NOT NULL UNIQUE,
+      ordercode VARCHAR(64) NOT NULL,
+      from_class VARCHAR(32) NOT NULL,
+      to_class VARCHAR(32) NOT NULL,
+      amount INT NOT NULL,
+      original_money INT NOT NULL DEFAULT 0,
+      status VARCHAR(32) NOT NULL DEFAULT 'pending',
+      create_time DATETIME NOT NULL,
+      update_time DATETIME NULL,
+      KEY idx_ticket_upgrade_ordercode (ordercode),
+      KEY idx_ticket_upgrade_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await connection.query(
+    "ALTER TABLE ticket_upgrade_requests MODIFY request_id VARCHAR(80) NOT NULL"
+  );
+
+  const [columns] = await connection.query<RowDataPacket[]>(
+    "SHOW COLUMNS FROM ticket_upgrade_requests LIKE 'original_money'"
+  );
+  if (columns.length === 0) {
+    await connection.query(
+      "ALTER TABLE ticket_upgrade_requests ADD COLUMN original_money INT NOT NULL DEFAULT 0 AFTER amount"
+    );
+  }
+}
+
 function validateCreateOrderInput(input: CreateOrderInput) {
   if (!input.name.trim() || !input.phone.trim() || !input.email.trim() || !input.gender) {
     throw new Error("Vui long dien day du: Ho ten, SDT, Email va Gioi tinh.");
@@ -278,6 +391,204 @@ function buildOrderDetail(records: OrderRecord[]): OrderDetail {
     status: records.some((record) => isPaidStatus(record.status)) ? "paydone" : "pending",
     records
   };
+}
+
+async function getTicketUpgradePaymentDetail(requestId: string) {
+  const code = requestId.trim();
+  if (!code) return null;
+  const paymentCodeCandidates = getUpgradePaymentCodeCandidates(code);
+
+  const pool = getDatabasePool();
+  if (!pool) {
+    const request =
+      paymentCodeCandidates.map(getMockUpgradeRequest).find(Boolean) ?? null;
+    if (!request) return null;
+
+    const ticket = getMockOrderByOrderCode(request.orderCode);
+    if (!ticket) return null;
+    const applied = getTicketTier(ticket.className) === request.toClass;
+    const paid = isPaidStatus(request.status) || isPaidStatus(ticket.status);
+
+    return {
+      orderId: request.requestId,
+      customerName: ticket.customerName,
+      phone: ticket.phone,
+      email: ticket.email,
+      transferContent: request.requestId,
+      totalMoney: request.amount,
+      status: applied && paid ? "paydone" : "pending",
+      records: [
+        {
+          orderCode: request.orderCode,
+          orderId: request.requestId,
+          createTime: request.createTime,
+          customerName: ticket.customerName,
+          phone: ticket.phone,
+          email: ticket.email,
+          gender: ticket.gender,
+          className: `Nang hang ${request.fromClass} -> ${request.toClass}`,
+          money: request.amount,
+          status: request.status,
+          transferContent: request.requestId
+        }
+      ]
+    } satisfies OrderDetail;
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await ensureTicketUpgradeTable(connection);
+    const [rows] = await connection.query<UpgradeRequestRow[]>(
+      `
+        SELECT request_id, ordercode, from_class, to_class, amount, original_money, status, create_time, update_time
+        FROM ticket_upgrade_requests
+        WHERE request_id IN (?, ?)
+        LIMIT 1
+      `,
+      [paymentCodeCandidates[0], paymentCodeCandidates[1] ?? paymentCodeCandidates[0]]
+    );
+
+    const request = rows[0];
+    if (!request) return null;
+
+    const [ticketRows] = await connection.query<OrderRow[]>(
+      `
+        SELECT ordercode, order_id, create_time, name, phone, email, gender, class, money, status
+        FROM orders
+        WHERE ordercode = ?
+        LIMIT 1
+      `,
+      [request.ordercode]
+    );
+
+    const ticket = ticketRows[0];
+    if (!ticket) return null;
+    const applied = getTicketTier(ticket.class) === request.to_class;
+    const paid = isPaidStatus(request.status) || isPaidStatus(ticket.status);
+
+    return {
+      orderId: request.request_id,
+      customerName: ticket.name,
+      phone: ticket.phone,
+      email: ticket.email,
+      transferContent: request.request_id,
+      totalMoney: Number(request.amount),
+      status: applied && paid ? "paydone" : "pending",
+      records: [
+        {
+          orderCode: request.ordercode,
+          orderId: request.request_id,
+          createTime: request.create_time,
+          customerName: ticket.name,
+          phone: ticket.phone,
+          email: ticket.email,
+          gender: ticket.gender,
+          className: `Nang hang ${request.from_class} -> ${request.to_class}`,
+          money: Number(request.amount),
+          status: request.status,
+          transferContent: request.request_id
+        }
+      ]
+    } satisfies OrderDetail;
+  } finally {
+    connection.release();
+  }
+}
+
+async function completeTicketUpgradePayment(requestId: string) {
+  const code = requestId.trim();
+  if (!code) return false;
+  const paymentCodeCandidates = getUpgradePaymentCodeCandidates(code);
+
+  const updateTime = getVietnamNowString();
+  const pool = getDatabasePool();
+  if (!pool) {
+    return paymentCodeCandidates.some((candidate) =>
+      completeMockUpgradeRequest(candidate, updateTime)
+    );
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    await ensureTicketUpgradeTable(connection);
+
+    const [rows] = await connection.query<UpgradeRequestRow[]>(
+      `
+        SELECT request_id, ordercode, from_class, to_class, amount, original_money, status, create_time, update_time
+        FROM ticket_upgrade_requests
+        WHERE request_id IN (?, ?)
+        LIMIT 1
+        FOR UPDATE
+      `,
+      [paymentCodeCandidates[0], paymentCodeCandidates[1] ?? paymentCodeCandidates[0]]
+    );
+
+    const request = rows[0];
+    if (!request) {
+      await connection.rollback();
+      return false;
+    }
+
+    const [ticketRows] = await connection.query<OrderRow[]>(
+      `
+        SELECT ordercode, order_id, create_time, name, phone, email, gender, class, money, status
+        FROM orders
+        WHERE ordercode = ?
+        LIMIT 1
+        FOR UPDATE
+      `,
+      [request.ordercode]
+    );
+
+    const ticket = ticketRows[0];
+    if (!ticket) {
+      throw new Error("Khong tim thay ma ve can nang hang.");
+    }
+
+    const expectedMoney = Number(request.original_money) + Number(request.amount);
+    if (
+      getTicketTier(ticket.class) !== request.to_class ||
+      Number(ticket.money) !== expectedMoney
+    ) {
+      const [result] = await connection.query<ResultSetHeader>(
+        `
+          UPDATE orders
+          SET class = ?, money = ?, money_VAT = ?, update_time = ?, status = 'paydone'
+          WHERE ordercode = ?
+          LIMIT 1
+        `,
+        [
+          request.to_class,
+          expectedMoney,
+          expectedMoney,
+          updateTime,
+          request.ordercode
+        ]
+      );
+
+      if (result.affectedRows === 0) {
+        throw new Error("Khong tim thay ma ve can nang hang.");
+      }
+    }
+
+    await connection.query(
+      `
+        UPDATE ticket_upgrade_requests
+        SET status = 'paydone', update_time = ?
+        WHERE request_id = ?
+      `,
+      [updateTime, request.request_id]
+    );
+
+    await connection.commit();
+    return true;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 async function sendRegisterWebhook(payload: Record<string, unknown>) {
@@ -326,6 +637,104 @@ async function sendRegisterWebhook(payload: Record<string, unknown>) {
       error
     });
   }
+}
+
+async function sendPaymentUpdateWebhook(payload: {
+  transferAmount: number;
+  code: string;
+  transactionDate: string;
+}) {
+  try {
+    console.info("Sending payment update webhook", {
+      webhookUrl: PAYMENT_UPDATE_WEBHOOK_URL,
+      orderId: payload.code
+    });
+
+    const response = await fetch(PAYMENT_UPDATE_WEBHOOK_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json; charset=utf-8"
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(EXTERNAL_WEBHOOK_TIMEOUT_MS)
+    });
+
+    const responseText = await response.text();
+    if (!response.ok) {
+      console.error("Payment update webhook failed", {
+        webhookUrl: PAYMENT_UPDATE_WEBHOOK_URL,
+        orderId: payload.code,
+        status: response.status,
+        body: responseText
+      });
+      return;
+    }
+
+    console.info("Payment update webhook delivered", {
+      webhookUrl: PAYMENT_UPDATE_WEBHOOK_URL,
+      orderId: payload.code,
+      status: response.status,
+      body: responseText
+    });
+  } catch (error) {
+    console.error("Payment update webhook request error", {
+      webhookUrl: PAYMENT_UPDATE_WEBHOOK_URL,
+      orderId: payload.code,
+      error
+    });
+  }
+}
+
+async function checkExternalPaymentDone(code: string) {
+  const checkPaymentUrl = normalizeExternalUrl(process.env.BS_CHECK_PAYMENT_URL);
+  if (!checkPaymentUrl) return false;
+
+  try {
+    console.info("Checking payment status via external endpoint", {
+      checkPaymentUrl,
+      orderId: code
+    });
+
+    const response = await fetch(checkPaymentUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ orderid: code }),
+      signal: AbortSignal.timeout(EXTERNAL_WEBHOOK_TIMEOUT_MS)
+    });
+
+    const responseText = await response.text();
+    if (!response.ok) {
+      console.error("Payment status proxy failed", {
+        checkPaymentUrl,
+        orderId: code,
+        status: response.status,
+        body: responseText
+      });
+      return false;
+    }
+
+    try {
+      const payload = JSON.parse(responseText) as { status?: string };
+      return payload.status === "paydone";
+    } catch (error) {
+      console.error("Payment status proxy invalid JSON response", {
+        checkPaymentUrl,
+        orderId: code,
+        body: responseText,
+        error
+      });
+    }
+  } catch (error) {
+    console.error("Payment status proxy request error", {
+      checkPaymentUrl,
+      orderId: code,
+      error
+    });
+  }
+
+  return false;
 }
 
 export function getOperatingMode() {
@@ -396,6 +805,135 @@ export async function validateVoucher(voucherCode: string) {
   return toValidatedVoucher(voucher);
 }
 
+export async function getTicketUpgradeInfo(orderCode: string) {
+  const code = orderCode.trim();
+  if (!code) {
+    throw new Error("Vui long nhap ma ve.");
+  }
+
+  const pool = getDatabasePool();
+  if (!pool) {
+    const record = getMockOrderByOrderCode(code);
+    if (!record) {
+      throw new Error("Khong tim thay ma ve.");
+    }
+
+    const currentTier = getTicketTier(record.className);
+    if (!currentTier) {
+      throw new Error("Hang ve hien tai khong ho tro nang hang.");
+    }
+
+    return {
+      orderCode: record.orderCode,
+      orderId: record.orderId,
+      customerName: record.customerName,
+      phone: record.phone,
+      email: record.email,
+      className: record.className,
+      currentMoney: Number(record.money),
+      currentTier,
+      status: record.status,
+      options: TICKET_UPGRADE_OPTIONS[currentTier]
+    } satisfies TicketUpgradeInfo;
+  }
+
+  const [rows] = await pool.query<OrderRow[]>(
+    `
+      SELECT ordercode, order_id, create_time, name, phone, email, gender, class, money, status
+      FROM orders
+      WHERE ordercode = ?
+      LIMIT 1
+    `,
+    [code]
+  );
+
+  if (rows.length === 0) {
+    throw new Error("Khong tim thay ma ve.");
+  }
+
+  return buildUpgradeInfo(rows[0]);
+}
+
+export async function createTicketUpgrade(input: CreateTicketUpgradeInput) {
+  const orderCode = input.orderCode.trim();
+  const targetTier = input.targetTier;
+  if (!orderCode) {
+    throw new Error("Vui long nhap ma ve.");
+  }
+
+  const info = await getTicketUpgradeInfo(orderCode);
+  const amount = getUpgradeAmount(info.currentTier, targetTier);
+  if (!amount) {
+    throw new Error("Hang ve nay khong the nang len lua chon da chon.");
+  }
+
+  const createTime = getVietnamNowString();
+  const requestId = buildUpgradePaymentCode(info.orderCode);
+  const pool = getDatabasePool();
+  if (!pool) {
+    saveMockUpgradeRequest({
+      requestId,
+      orderCode: info.orderCode,
+      fromClass: info.currentTier,
+      toClass: targetTier,
+      amount,
+      originalMoney: info.currentMoney,
+      status: "pending",
+      createTime,
+      updateTime: null
+    });
+
+    return {
+      orderId: requestId,
+      redirect: `${getBaseUrl()}/thanh-toan?orderid=${encodeURIComponent(requestId)}`
+    } satisfies CreatedOrder;
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    await ensureTicketUpgradeTable(connection);
+
+    await connection.query(
+      `
+        INSERT INTO ticket_upgrade_requests (
+          request_id, ordercode, from_class, to_class, amount, original_money, status, create_time
+        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+        ON DUPLICATE KEY UPDATE
+          ordercode = VALUES(ordercode),
+          from_class = VALUES(from_class),
+          to_class = VALUES(to_class),
+          amount = VALUES(amount),
+          original_money = VALUES(original_money),
+          status = 'pending',
+          create_time = VALUES(create_time),
+          update_time = NULL
+      `,
+      [
+        requestId,
+        info.orderCode,
+        info.currentTier,
+        targetTier,
+        amount,
+        info.currentMoney,
+        createTime
+      ]
+    );
+
+    await connection.commit();
+
+    return {
+      orderId: requestId,
+      redirect: `${getBaseUrl()}/thanh-toan?orderid=${encodeURIComponent(requestId)}`
+    } satisfies CreatedOrder;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
 export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder> {
   validateCreateOrderInput(input);
 
@@ -423,6 +961,10 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
     voucherData = await validateVoucher(voucherCode);
   }
 
+  const orderSummary = calculateCartSummary(input.tickets, voucherData);
+  const isVoucherFreeOrder = Boolean(voucherData && orderSummary.total === 0);
+  const initialStatus = isVoucherFreeOrder ? "paydone" : "new";
+
   let totalRemainingTickets = input.tickets.reduce(
     (sum, ticket) => sum + Math.max(0, Number(ticket.quantity || 0)),
     0
@@ -430,6 +972,10 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
   let remainingCartDiscount =
     voucherData && voucherData.classy === "money" && !voucherData.class
       ? voucherData.money ?? 0
+      : 0;
+  let remainingFullRateDiscounts =
+    voucherData && voucherData.classy === "rate" && (voucherData.rate ?? 0) >= 100
+      ? 1
       : 0;
 
   const pool = getDatabasePool();
@@ -453,7 +999,15 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
             (ticketName === targetClass || ticketName.includes(targetClass));
 
           if (voucherData.classy === "rate" && (!targetClass || isTargetClass)) {
-            money = Math.round(money * (100 - (voucherData.rate ?? 0)) / 100);
+            const rate = voucherData.rate ?? 0;
+            if (rate >= 100) {
+              if (remainingFullRateDiscounts > 0) {
+                money = 0;
+                remainingFullRateDiscounts -= 1;
+              }
+            } else {
+              money = Math.round((money * (100 - rate)) / 100);
+            }
           }
 
           if (voucherData.classy === "money") {
@@ -486,7 +1040,7 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
           gender,
           className: ticket.name,
           money,
-          status: "new",
+          status: initialStatus,
           transferContent: orderId
         });
 
@@ -503,33 +1057,43 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
     }
 
     saveMockOrder(orderId, mockRecords);
-    await sendRegisterWebhook({
-      order_id: orderId,
-      create_time: createTime,
-      ref,
-      name,
-      phone,
-      email,
-      gender,
-      career,
-      hope,
-      total_tickets: mockRecords.length,
-      tickets: webhookTickets,
-      source,
-      customer_id: customerId,
-      voucher: voucherCode || null,
-      utm_source: utmSource,
-      utm_medium: utmMedium,
-      utm_campaign: utmCampaign,
-      user_agent: userAgent,
-      ip: clientIp,
-      fbp,
-      fbc
-    });
+    if (isVoucherFreeOrder) {
+      await sendPaymentUpdateWebhook({
+        transferAmount: 0,
+        code: orderId,
+        transactionDate: createTime
+      });
+    } else {
+      await sendRegisterWebhook({
+        order_id: orderId,
+        create_time: createTime,
+        ref,
+        name,
+        phone,
+        email,
+        gender,
+        career,
+        hope,
+        total_tickets: mockRecords.length,
+        tickets: webhookTickets,
+        source,
+        customer_id: customerId,
+        voucher: voucherCode || null,
+        utm_source: utmSource,
+        utm_medium: utmMedium,
+        utm_campaign: utmCampaign,
+        user_agent: userAgent,
+        ip: clientIp,
+        fbp,
+        fbc
+      });
+    }
 
     return {
       orderId,
-      redirect: `${getBaseUrl()}/thanh-toan?orderid=${encodeURIComponent(orderId)}`
+      redirect: `${getBaseUrl()}${
+        isVoucherFreeOrder ? "/trang-cam-on" : "/thanh-toan"
+      }?orderid=${encodeURIComponent(orderId)}`
     };
   }
 
@@ -556,7 +1120,15 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
             (ticketName === targetClass || ticketName.includes(targetClass));
 
           if (voucherData.classy === "rate" && (!targetClass || isTargetClass)) {
-            money = Math.round(money * (100 - (voucherData.rate ?? 0)) / 100);
+            const rate = voucherData.rate ?? 0;
+            if (rate >= 100) {
+              if (remainingFullRateDiscounts > 0) {
+                money = 0;
+                remainingFullRateDiscounts -= 1;
+              }
+            } else {
+              money = Math.round((money * (100 - rate)) / 100);
+            }
           }
 
           if (voucherData.classy === "money") {
@@ -583,11 +1155,13 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
           `
             INSERT INTO orders (
               ordercode, create_time, name, phone, email, gender, class, money, money_VAT,
-              status, is_gift, is_checkin, number_checkin, career, hope, ref, source,
+              status${isVoucherFreeOrder ? ", update_time" : ""},
+              is_gift, is_checkin, number_checkin, career, hope, ref, source,
               send_noti, customer_id, voucher, utm_source, utm_medium, utm_campaign, order_id
             ) VALUES (
               ?, ?, ?, ?, ?, ?, ?, ?, ?,
-              'new', 0, 0, 0, ?, ?, ?, ?,
+              ?${isVoucherFreeOrder ? ", ?" : ""},
+              0, 0, 0, ?, ?, ?, ?,
               0, ?, ?, ?, ?, ?, ?
             )
           `,
@@ -601,6 +1175,8 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
             ticket.name,
             money,
             money,
+            initialStatus,
+            ...(isVoucherFreeOrder ? [createTime] : []),
             career,
             hope,
             ref,
@@ -632,33 +1208,43 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
 
     await connection.commit();
 
-    await sendRegisterWebhook({
-      order_id: orderId,
-      create_time: createTime,
-      ref,
-      name,
-      phone,
-      email,
-      gender,
-      career,
-      hope,
-      total_tickets: inserted,
-      tickets: webhookTickets,
-      source,
-      customer_id: customerId,
-      voucher: voucherCode || null,
-      utm_source: utmSource,
-      utm_medium: utmMedium,
-      utm_campaign: utmCampaign,
-      user_agent: userAgent,
-      ip: clientIp,
-      fbp,
-      fbc
-    });
+    if (isVoucherFreeOrder) {
+      await sendPaymentUpdateWebhook({
+        transferAmount: 0,
+        code: orderId,
+        transactionDate: createTime
+      });
+    } else {
+      await sendRegisterWebhook({
+        order_id: orderId,
+        create_time: createTime,
+        ref,
+        name,
+        phone,
+        email,
+        gender,
+        career,
+        hope,
+        total_tickets: inserted,
+        tickets: webhookTickets,
+        source,
+        customer_id: customerId,
+        voucher: voucherCode || null,
+        utm_source: utmSource,
+        utm_medium: utmMedium,
+        utm_campaign: utmCampaign,
+        user_agent: userAgent,
+        ip: clientIp,
+        fbp,
+        fbc
+      });
+    }
 
     return {
       orderId,
-      redirect: `${getBaseUrl()}/thanh-toan?orderid=${encodeURIComponent(orderId)}`
+      redirect: `${getBaseUrl()}${
+        isVoucherFreeOrder ? "/trang-cam-on" : "/thanh-toan"
+      }?orderid=${encodeURIComponent(orderId)}`
     };
   } catch (error) {
     await connection.rollback();
@@ -671,6 +1257,9 @@ export async function createOrder(input: CreateOrderInput): Promise<CreatedOrder
 export async function getOrderDetail(orderId: string) {
   const code = orderId.trim();
   if (!code) return null;
+
+  const upgradeDetail = await getTicketUpgradePaymentDetail(code);
+  if (upgradeDetail) return upgradeDetail;
 
   const pool = getDatabasePool();
   if (!pool) {
@@ -718,6 +1307,32 @@ export async function checkPaymentStatus(
     return { status: "pending" };
   }
 
+  const upgradeDetail = await getTicketUpgradePaymentDetail(code);
+  if (upgradeDetail) {
+    if (isPaidStatus(upgradeDetail.status)) {
+      return { status: "paydone" };
+    }
+
+    const pool = getDatabasePool();
+    if (!pool && manual) {
+      await completeTicketUpgradePayment(code);
+      const updatedDetail = await getTicketUpgradePaymentDetail(code);
+      return {
+        status: updatedDetail && isPaidStatus(updatedDetail.status) ? "paydone" : "pending"
+      };
+    }
+
+    if (await checkExternalPaymentDone(code)) {
+      await completeTicketUpgradePayment(code);
+      const updatedDetail = await getTicketUpgradePaymentDetail(code);
+      return {
+        status: updatedDetail && isPaidStatus(updatedDetail.status) ? "paydone" : "pending"
+      };
+    }
+
+    return { status: "pending" };
+  }
+
   const pool = getDatabasePool();
   if (!pool) {
     if (manual) {
@@ -730,53 +1345,8 @@ export async function checkPaymentStatus(
     };
   }
 
-  const checkPaymentUrl = normalizeExternalUrl(process.env.BS_CHECK_PAYMENT_URL);
-  if (checkPaymentUrl) {
-    try {
-      console.info("Checking payment status via external endpoint", {
-        checkPaymentUrl,
-        orderId: code
-      });
-
-      const response = await fetch(checkPaymentUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ orderid: code }),
-        signal: AbortSignal.timeout(EXTERNAL_WEBHOOK_TIMEOUT_MS)
-      });
-
-      const responseText = await response.text();
-      if (!response.ok) {
-        console.error("Payment status proxy failed", {
-          checkPaymentUrl,
-          orderId: code,
-          status: response.status,
-          body: responseText
-        });
-      } else {
-        try {
-          const payload = JSON.parse(responseText) as { status?: string };
-          if (payload.status === "paydone") {
-            return { status: "paydone" };
-          }
-        } catch (error) {
-          console.error("Payment status proxy invalid JSON response", {
-            checkPaymentUrl,
-            orderId: code,
-            body: responseText,
-            error
-          });
-        }
-      }
-    } catch (error) {
-      console.error("Payment status proxy request error", {
-        checkPaymentUrl,
-        orderId: code,
-        error
-      });
-    }
+  if (await checkExternalPaymentDone(code)) {
+    return { status: "paydone" };
   }
 
   const [rows] = await pool.query<RowDataPacket[]>(
@@ -794,6 +1364,10 @@ export async function markOrderPaid(orderId: string) {
   const code = orderId.trim();
   if (!code) {
     throw new Error("Order ID khong hop le.");
+  }
+
+  if (await completeTicketUpgradePayment(code)) {
+    return;
   }
 
   const pool = getDatabasePool();
