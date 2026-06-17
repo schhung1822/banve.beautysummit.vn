@@ -310,7 +310,8 @@ function getUpgradeAmount(fromTier: TicketUpgradeTier, toTier: TicketUpgradeTier
 
 function assertPaidTicketForUpgrade(status: string) {
   if (!isPaidStatus(status)) {
-    throw new Error("Vé nag y chưa được thanh toán, không thể nâng hạng");
+    throw new Error("Vé này chưa được thanh toán, không thể nâng hạng.");
+  }
 }
 
 function buildUpgradeInfo(row: OrderRow): TicketUpgradeInfo {
