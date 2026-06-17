@@ -308,11 +308,18 @@ function getUpgradeAmount(fromTier: TicketUpgradeTier, toTier: TicketUpgradeTier
     ?.amount ?? null;
 }
 
+function assertPaidTicketForUpgrade(status: string) {
+  if (!isPaidStatus(status)) {
+    throw new Error("Vé nag y chưa được thanh toán, không thể nâng hạng");
+}
+
 function buildUpgradeInfo(row: OrderRow): TicketUpgradeInfo {
   const currentTier = getTicketTier(row.class);
   if (!currentTier) {
-    throw new Error("Hang ve hien tai khong ho tro nang hang.");
+    throw new Error("Hạng vé hiện tại không hỗ trợ nâng hạng.");
   }
+
+  assertPaidTicketForUpgrade(row.status);
 
   return {
     orderCode: row.ordercode,
@@ -362,11 +369,11 @@ async function ensureTicketUpgradeTable(connection: PoolConnection) {
 
 function validateCreateOrderInput(input: CreateOrderInput) {
   if (!input.name.trim() || !input.phone.trim() || !input.email.trim() || !input.gender) {
-    throw new Error("Vui long dien day du: Ho ten, SDT, Email va Gioi tinh.");
+    throw new Error("Vui lòng diền đầy đủ: Họ tên, SĐT, Email va Giới tính.");
   }
 
   if (!Array.isArray(input.tickets) || input.tickets.length === 0) {
-    throw new Error("Vui long chon it nhat 1 ve.");
+    throw new Error("Vui lòng chọn ít nhất 1 vé.");
   }
 
   const totalQuantity = input.tickets.reduce(
@@ -375,7 +382,7 @@ function validateCreateOrderInput(input: CreateOrderInput) {
   );
 
   if (totalQuantity < 1) {
-    throw new Error("Vui long chon it nhat 1 ve.");
+    throw new Error("Vui lòng chọn ít nhất 1 vé.");
   }
 }
 
@@ -543,7 +550,13 @@ async function completeTicketUpgradePayment(requestId: string) {
 
     const ticket = ticketRows[0];
     if (!ticket) {
-      throw new Error("Khong tim thay ma ve can nang hang.");
+      await connection.rollback();
+      return false;
+    }
+
+    if (!isPaidStatus(ticket.status)) {
+      await connection.rollback();
+      return false;
     }
 
     const expectedMoney = Number(request.original_money) + Number(request.amount);
@@ -568,7 +581,7 @@ async function completeTicketUpgradePayment(requestId: string) {
       );
 
       if (result.affectedRows === 0) {
-        throw new Error("Khong tim thay ma ve can nang hang.");
+        throw new Error("Không tìm thấy vé cần nâng hạng.");
       }
     }
 
@@ -767,7 +780,7 @@ export async function getTickets() {
 export async function validateVoucher(voucherCode: string) {
   const code = voucherCode.trim();
   if (!code) {
-    throw new Error("Vui long nhap ma giam gia.");
+    throw new Error("Vui lòng nhập mã giảm giá.");
   }
 
   const pool = getDatabasePool();
@@ -808,20 +821,21 @@ export async function validateVoucher(voucherCode: string) {
 export async function getTicketUpgradeInfo(orderCode: string) {
   const code = orderCode.trim();
   if (!code) {
-    throw new Error("Vui long nhap ma ve.");
+    throw new Error("Vui lòng nhập mã vé.");
   }
 
   const pool = getDatabasePool();
   if (!pool) {
     const record = getMockOrderByOrderCode(code);
     if (!record) {
-      throw new Error("Khong tim thay ma ve.");
+      throw new Error("Không tìm thấy vé.");
     }
 
     const currentTier = getTicketTier(record.className);
     if (!currentTier) {
-      throw new Error("Hang ve hien tai khong ho tro nang hang.");
+      throw new Error("Hạng vé hiện tại không hỗ trợ nâng hạng.");
     }
+    assertPaidTicketForUpgrade(record.status);
 
     return {
       orderCode: record.orderCode,
@@ -864,7 +878,7 @@ export async function createTicketUpgrade(input: CreateTicketUpgradeInput) {
   const info = await getTicketUpgradeInfo(orderCode);
   const amount = getUpgradeAmount(info.currentTier, targetTier);
   if (!amount) {
-    throw new Error("Hang ve nay khong the nang len lua chon da chon.");
+    throw new Error("Hạng vé này không thể nâng lên lựa chọn đã chọn.");
   }
 
   const createTime = getVietnamNowString();

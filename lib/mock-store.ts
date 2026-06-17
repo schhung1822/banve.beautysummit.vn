@@ -1,5 +1,6 @@
 import { mockTickets, mockVouchers } from "@/lib/constants";
 import type { OrderRecord, Ticket, TicketUpgradeTier } from "@/lib/types";
+import { isPaidStatus } from "@/lib/utils";
 
 type MutableVoucher = {
   voucher: string;
@@ -110,14 +111,23 @@ export function completeMockUpgradeRequest(requestId: string, updateTime: string
       record.orderCode === request.orderCode
         ? {
             ...record,
-            className: request.toClass,
-            money: request.originalMoney + request.amount,
-            status: "paydone"
+            ...(isPaidStatus(record.status)
+              ? {
+                  className: request.toClass,
+                  money: request.originalMoney + request.amount,
+                  status: "paydone"
+                }
+              : {})
           }
         : record
     );
 
-    if (nextRecords.some((record) => record.orderCode === request.orderCode)) {
+    if (
+      records.some(
+        (record) =>
+          record.orderCode === request.orderCode && isPaidStatus(record.status)
+      )
+    ) {
       orders.set(orderId, nextRecords);
       updatedTicket = true;
     }
